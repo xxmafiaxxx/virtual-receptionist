@@ -21,6 +21,7 @@ coverage/
 *.jks
 *credentials*.json
 *service-account*.json
+*-firebase-adminsdk-*.json
 secrets/
 .secrets/
 
@@ -52,4 +53,3 @@ Thumbs.db
 .vercel/
 .turbo/
 *.tsbuildinfo
-

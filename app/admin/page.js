@@ -7,6 +7,9 @@ export default function Admin(){
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     google: Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
     elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
+    elevenlabsAgent: Boolean(process.env.ELEVENLABS_AGENT_ID),
+    elevenlabsPhoneNumber: Boolean(process.env.ELEVENLABS_PHONE_NUMBER_ID),
+    twilio: Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN),
     modelProvider: process.env.AI_MODEL_PROVIDER || 'openai',
     localModelUrl: process.env.LOCAL_MODEL_URL || 'http://localhost:11434',
   }

@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Encrypted integration secrets are server-only. Admin SDK access is governed by IAM.
+    match /users/{uid}/private/{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
