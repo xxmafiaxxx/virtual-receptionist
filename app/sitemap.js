@@ -1,0 +1,1 @@
+export default function sitemap(){return [{url:'https://corinne-receptionist.com',lastModified:new Date(),changeFrequency:'weekly',priority:1},{url:'https://corinne-receptionist.com/admin',lastModified:new Date(),changeFrequency:'weekly',priority:.4}]}

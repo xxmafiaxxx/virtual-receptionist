@@ -1,0 +1,55 @@
+# Dependencies and builds
+node_modules/
+.next/
+out/
+dist/
+coverage/
+
+# Environment secrets (keep examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Keys, certificates, credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*credentials*.json
+*service-account*.json
+secrets/
+.secrets/
+
+# Local databases and patient-data exports
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.bak
+*.dump
+*.sql.gz
+exports/
+private/
+uploads/
+
+# Logs and local tooling
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Vercel and local runtime state
+.vercel/
+.turbo/
+*.tsbuildinfo
+
