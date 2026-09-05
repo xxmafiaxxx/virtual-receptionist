@@ -25,8 +25,16 @@ export async function POST(request) {
     const apiKey = decryptSecret(stored.elevenlabs)
     const agentId = decryptSecret(stored.elevenlabsAgentId) || process.env.ELEVENLABS_AGENT_ID
     const phoneNumberId = decryptSecret(stored.elevenlabsPhoneNumberId) || process.env.ELEVENLABS_PHONE_NUMBER_ID
-    if (!apiKey || !agentId || !phoneNumberId) {
-      return NextResponse.json({ error: 'Add your ElevenLabs API key, agent ID, and phone-number ID under API keys.' }, { status: 409 })
+    const missing = [
+      !apiKey && 'ElevenLabs API key',
+      !agentId && 'ElevenLabs agent ID',
+      !phoneNumberId && 'ElevenLabs phone-number ID',
+    ].filter(Boolean)
+    if (missing.length) {
+      return NextResponse.json({
+        error: `Call setup is incomplete. Add ${missing.join(', ')} under API keys.`,
+        code: 'ELEVENLABS_SETUP_INCOMPLETE',
+      }, { status: 409 })
     }
 
     const response = await fetch('https://api.elevenlabs.io/v1/convai/twilio/outbound-call', {
@@ -47,7 +55,16 @@ export async function POST(request) {
     await adminDb.collection(`users/${user.uid}/call-history`).add({ patientName: patient.name, phone, purpose, conversationId: data.conversation_id || null, createdAt: new Date(), status: 'initiated' })
     return NextResponse.json({ success: true, conversationId: data.conversation_id || null })
   } catch (error) {
-    const status = error?.message === 'Unauthorized' ? 401 : 500
-    return NextResponse.json({ error: status === 401 ? 'Unauthorized' : 'The call could not be started.' }, { status })
+    if (error?.message === 'Unauthorized' || String(error?.code || '').startsWith('auth/')) {
+      return NextResponse.json({ error: 'Your login session expired. Sign in again before placing a call.', code: 'AUTH_REQUIRED' }, { status: 401 })
+    }
+    if (String(error?.message || '').includes('authenticate data')) {
+      return NextResponse.json({ error: 'Saved API keys can no longer be decrypted. Re-enter them under API keys.', code: 'DECRYPT_FAILED' }, { status: 409 })
+    }
+    if (error instanceof TypeError) {
+      return NextResponse.json({ error: 'The server could not reach ElevenLabs. Check internet access and try again.', code: 'ELEVENLABS_UNREACHABLE' }, { status: 502 })
+    }
+    console.error('Outbound call failed', { code: error?.code, name: error?.name })
+    return NextResponse.json({ error: 'The call failed before reaching ElevenLabs. Check server logs for the error code.', code: 'CALL_START_FAILED' }, { status: 500 })
   }
 }

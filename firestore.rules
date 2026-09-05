@@ -5,5 +5,13 @@ service cloud.firestore {
     match /users/{uid}/private/{document=**} {
       allow read, write: if false;
     }
+    // Appointments are read and written only by the server (Admin SDK / kiosk + admin routes).
+    match /users/{uid}/appointments/{document=**} {
+      allow read, write: if false;
+    }
+    // Kiosk token -> practice mapping is resolved server-side only; never exposed to clients.
+    match /kiosk-links/{token} {
+      allow read, write: if false;
+    }
   }
 }
