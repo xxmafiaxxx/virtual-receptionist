@@ -13,5 +13,9 @@ service cloud.firestore {
     match /kiosk-links/{token} {
       allow read, write: if false;
     }
+    // Outbound campaigns (and their per-call subdocs) are orchestrated only by the server worker.
+    match /users/{uid}/campaigns/{document=**} {
+      allow read, write: if false;
+    }
   }
 }
