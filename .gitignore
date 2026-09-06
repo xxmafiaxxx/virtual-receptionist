@@ -53,3 +53,6 @@ Thumbs.db
 .vercel/
 .turbo/
 *.tsbuildinfo
+
+.vercel
+.env*
