@@ -9,6 +9,10 @@ service cloud.firestore {
     match /users/{uid}/appointments/{document=**} {
       allow read, write: if false;
     }
+    // Agent tasks are managed only through the server (admin routes + future agent worker).
+    match /users/{uid}/tasks/{document=**} {
+      allow read, write: if false;
+    }
     // Kiosk token -> practice mapping is resolved server-side only; never exposed to clients.
     match /kiosk-links/{token} {
       allow read, write: if false;
