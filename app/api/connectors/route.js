@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { FieldValue } from 'firebase-admin/firestore'
 import { adminAuth, adminDb } from '../../../lib/firebase-admin'
 import { encryptSecret } from '../../../lib/secret-crypto'
+import { syncPracticeFromOpenDental } from '../../../lib/practice-settings'
 
 export const runtime = 'nodejs'
 
@@ -69,7 +70,16 @@ export async function POST(request) {
     const config = cleanConfig(body.config)
     const configs = { ...current, [system]: { ...config, updatedAt: new Date().toISOString() } }
     await ref.set({ ownerUid: user.uid, configs, updatedAt: new Date() }, { merge: true })
-    return NextResponse.json({ config: configs[system] })
+
+    // First time a practice database is saved, pull its practice settings
+    // (name, operatories, doctors + NPIs, staff) so the app reflects the real
+    // practice. Best-effort: a failed sync never blocks saving the connector.
+    let practiceSync = null
+    if (config.engine === 'MySQL / MariaDB' && config.host) {
+      const synced = await syncPracticeFromOpenDental(user.uid).catch(() => null)
+      if (synced?.ok) practiceSync = { counts: synced.counts, source: synced.source }
+    }
+    return NextResponse.json({ config: configs[system], practiceSync })
   } catch (e) {
     if (authFail(e)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return NextResponse.json({ error: 'Could not save connector settings.' }, { status: 500 })

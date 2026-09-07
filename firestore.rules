@@ -13,6 +13,11 @@ service cloud.firestore {
     match /users/{uid}/tasks/{document=**} {
       allow read, write: if false;
     }
+    // Shared practice data (settings, insurance payers) is written only by the
+    // server so every admin user of the practice sees the same truth.
+    match /practices/{document=**} {
+      allow read, write: if false;
+    }
     // Kiosk token -> practice mapping is resolved server-side only; never exposed to clients.
     match /kiosk-links/{token} {
       allow read, write: if false;
