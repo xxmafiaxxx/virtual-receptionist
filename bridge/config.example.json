@@ -1,0 +1,57 @@
+{
+  "_comment": "Copy this file to config.json and fill it in. Everything in config.json stays on the practice machine — never commit it.",
+
+  "port": 8787,
+  "_port_comment": "Local port the bridge listens on. The tunnel forwards a public URL to this.",
+
+  "token": "GENERATE-A-LONG-RANDOM-STRING-AND-PASTE-IT-HERE",
+  "_token_comment": "Shared secret. The app sends it as Authorization: Bearer <token>. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+
+  "odbc": {
+    "dsn": "",
+    "_dsn_comment": "Name of a 64-bit Windows ODBC DSN pointing at the Dentrix c-treeACE server. Leave empty to use the dsnLess block instead.",
+    "dsnLess": {
+      "driver": "FairCom c-treeACE SQL ODBC Driver",
+      "_driver_comment": "Exact driver name as shown in Windows ODBC Data Sources (64-bit) > Drivers tab. probe.js lists candidates if you are unsure.",
+      "server": "localhost",
+      "_server_comment": "Host of the Dentrix database server. 'localhost' when the bridge runs on the Dentrix server itself.",
+      "service": "5712",
+      "_service_comment": "c-treeACE SQL port. Dentrix is reported to use 5712 (FairCom default is 6597). Confirm with the practice IT or probe different ports.",
+      "uid": "ADMIN",
+      "pwd": "ADMIN",
+      "_uid_comment": "c-treeACE SQL login. FairCom ships ADMIN/ADMIN by default; Dentrix may have changed it."
+    }
+  },
+
+  "schema": {
+    "_comment": "Map real Dentrix table/column names here from the probe report (probe-report.json). Until every patient table+id+phone column is filled, /patients returns 503 by design.",
+
+    "patient": {
+      "table": "",
+      "id": "",
+      "firstName": "",
+      "lastName": "",
+      "phone": "",
+      "phone2": "",
+      "email": "",
+      "address": "",
+      "city": "",
+      "state": "",
+      "zip": "",
+      "dob": "",
+      "balance": "",
+      "notes": ""
+    },
+
+    "appointment": {
+      "table": "",
+      "id": "",
+      "patientId": "",
+      "date": "",
+      "time": "",
+      "provider": "",
+      "operatory": "",
+      "status": ""
+    }
+  }
+}

@@ -56,3 +56,7 @@ Thumbs.db
 
 .vercel
 .env*
+
+# Dentrix bridge local config and probe output (practice-specific)
+bridge/config.json
+bridge/probe-report.json

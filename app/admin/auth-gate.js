@@ -38,7 +38,7 @@ export default function AuthGate({ children, allowedEmails = [], allowedDomain =
     return onAuthStateChanged(auth, async (candidate) => {
       if (candidate && !isAllowed(candidate)) {
         await signOut(auth)
-        setError('This account is not authorized for practice administration.')
+        setError(`The account ${candidate.email || '(no email)'} is not authorized for practice administration. Ask the practice owner to add it to ADMIN_GOOGLE_EMAILS.`)
         setUser(null)
       } else setUser(candidate)
     })
