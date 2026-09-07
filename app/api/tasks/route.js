@@ -28,6 +28,7 @@ function serialize(doc) {
     status: a.status === 'done' ? 'done' : 'open',
     kind: a.kind || '',
     patientId: a.patientId ?? null,
+    lastCall: a.lastCall || null,
     createdAt: a.createdAt?.toDate ? a.createdAt.toDate().toISOString() : null,
   }
 }

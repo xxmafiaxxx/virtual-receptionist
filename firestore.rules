@@ -26,6 +26,10 @@ service cloud.firestore {
     match /users/{uid}/campaigns/{document=**} {
       allow read, write: if false;
     }
+    // Task batch runs (and their per-call subdocs) are orchestrated only by the server worker.
+    match /users/{uid}/task-runs/{document=**} {
+      allow read, write: if false;
+    }
     // Call history is written only by the server (Admin SDK).
     match /users/{uid}/call-history/{document=**} {
       allow read, write: if false;
