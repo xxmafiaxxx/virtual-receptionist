@@ -26,6 +26,8 @@ function serialize(doc) {
     dueDate: a.dueDate || '',
     notes: a.notes || '',
     status: a.status === 'done' ? 'done' : 'open',
+    kind: a.kind || '',
+    patientId: a.patientId ?? null,
     createdAt: a.createdAt?.toDate ? a.createdAt.toDate().toISOString() : null,
   }
 }
@@ -34,12 +36,15 @@ function cleanTask(raw) {
   const title = String(raw?.title || '').trim()
   if (!title) return null
   const dueDate = String(raw?.dueDate || '').trim()
+  const patientId = Number(raw?.patientId)
   return {
     title,
     patientName: String(raw?.patientName || '').trim(),
     phone: String(raw?.phone || '').replace(/[^+\d]/g, ''),
     dueDate: DATE_RE.test(dueDate) ? dueDate : '',
     notes: String(raw?.notes || '').trim(),
+    kind: String(raw?.kind || '').trim().slice(0, 40),
+    patientId: Number.isInteger(patientId) && patientId > 0 ? patientId : null,
     status: 'open',
     createdAt: new Date(),
   }
