@@ -26,5 +26,9 @@ service cloud.firestore {
     match /users/{uid}/campaigns/{document=**} {
       allow read, write: if false;
     }
+    // Call history is written only by the server (Admin SDK).
+    match /users/{uid}/call-history/{document=**} {
+      allow read, write: if false;
+    }
   }
 }
