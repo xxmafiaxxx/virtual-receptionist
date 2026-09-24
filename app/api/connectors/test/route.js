@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { adminAuth, adminDb } from '../../../../lib/firebase-admin'
 import { decryptSecret } from '../../../../lib/secret-crypto'
+import { odBridgeConfig } from '../../../../lib/opendental'
 
 export const runtime = 'nodejs'
 
@@ -29,6 +30,33 @@ export async function POST(request) {
 
     if (config.engine !== 'MySQL / MariaDB') {
       return NextResponse.json({ ok: false, error: `Connection testing is not available for ${config.engine} yet.` })
+    }
+
+    // When the on-site Open Dental bridge is configured (deployed site), the
+    // database lives behind the tunnel — test the bridge + its database instead
+    // of trying to reach the LAN host directly.
+    const bridge = await odBridgeConfig(user.uid, secretsSnap.data()?.secrets)
+    if (bridge) {
+      try {
+        const res = await fetch(bridge.url + '/od/info', {
+          headers: { Authorization: `Bearer ${bridge.token}` },
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (res.ok && body.ok) {
+          let host = bridge.url
+          try { host = new URL(bridge.url).host } catch {}
+          return NextResponse.json({ ok: true, bridge: true, host, database: body.database, version: body.version, tables: body.tables })
+        }
+        const code = body?.error?.code || ''
+        const friendly = code === 'ER_ACCESS_DENIED_ERROR' ? 'The bridge reached MySQL but the credentials in its config.json were rejected.'
+          : code === 'ER_BAD_DB_ERROR' ? 'The database named in the bridge config.json does not exist.'
+          : body?.error?.message || 'The bridge is up but its MySQL connection failed — check config.json on the practice machine.'
+        return NextResponse.json({ ok: false, bridge: true, error: friendly, code })
+      } catch {
+        return NextResponse.json({ ok: false, bridge: true, error: 'Could not reach the on-site bridge — confirm the bridge is running and the tunnel is up.' })
+      }
     }
 
     const password = decryptSecret(secretsSnap.data()?.secrets?.[secretKeyFor(name)])

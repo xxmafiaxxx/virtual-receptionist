@@ -7,6 +7,17 @@
   "token": "GENERATE-A-LONG-RANDOM-STRING-AND-PASTE-IT-HERE",
   "_token_comment": "Shared secret. The app sends it as Authorization: Bearer <token>. Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
 
+  "mysql": {
+    "_enabled_comment": "Open Dental engine. Fill this in and the app's Open Dental connector routes through this bridge (patients, appointments, insurance, practice sync, task analyzer, agent write-back). Remove the whole mysql block to disable. NOTE: /od/query runs whatever SQL the app sends, including writes — the token is database-level power, so keep it secret; you can point user at a least-privilege MySQL account if you like.",
+    "host": "127.0.0.1",
+    "_host_comment": "MySQL / MariaDB server. 127.0.0.1 when the bridge runs on the Open Dental server itself.",
+    "port": 3306,
+    "user": "root",
+    "password": "THE-MYSQL-PASSWORD",
+    "database": "opendental",
+    "_database_comment": "The Open Dental database name ('opendental' by default; the demo install uses 'demo')."
+  },
+
   "odbc": {
     "dsn": "",
     "_dsn_comment": "Name of a 64-bit Windows ODBC DSN pointing at the Dentrix c-treeACE server. Leave empty to use the dsnLess block instead.",

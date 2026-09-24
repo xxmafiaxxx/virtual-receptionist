@@ -1,8 +1,8 @@
 {
-  "name": "corinne-dentrix-bridge",
-  "version": "1.0.0",
+  "name": "corinne-bridge",
+  "version": "1.1.0",
   "private": true,
-  "description": "On-site read-only bridge between the practice Dentrix (c-treeACE ODBC) database and the Corinne virtual receptionist app.",
+  "description": "On-site bridge between the practice databases (Open Dental MySQL/MariaDB, Dentrix c-treeACE ODBC) and the Corinne virtual receptionist app.",
   "main": "bridge.js",
   "scripts": {
     "probe": "node probe.js",
@@ -12,6 +12,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "mysql2": "^3.11.0",
     "odbc": "^2.5.0"
   }
 }

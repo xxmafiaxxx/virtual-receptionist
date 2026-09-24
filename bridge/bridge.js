@@ -1,23 +1,31 @@
 #!/usr/bin/env node
 /**
- * Corinne Dentrix bridge — on-site read-only API in front of the practice's
- * Dentrix c-treeACE database (via the FairCom ODBC driver).
+ * Corinne on-site bridge — small authenticated HTTPS service that runs inside
+ * the practice LAN, next to the practice databases, and exposes them to the
+ * deployed Corinne app through an outbound-only tunnel (Cloudflare Tunnel or
+ * Tailscale Funnel) — never by opening a router port.
  *
- * Runs on a machine inside the practice LAN (ideally the Dentrix server).
- * Exposed to the Corinne app through an outbound-only tunnel (Cloudflare Tunnel
- * or Tailscale Funnel) — never by opening a router port.
+ * Two engines, either or both enabled via config.json:
  *
- * Endpoints (all require Authorization: Bearer <config token>):
- *   GET /                       — bridge info
- *   GET /health                 — { ok, db: { connected, error? } }
- *   GET /patients?phone=...     — lookup by phone (exact or last-10-digits)
- *   GET /patients?name=...      — search first/last name
- *   GET /patients?id=...        — single patient by id
- *   GET /patients/:id/appointments — latest appointments for one patient
+ *   mysql (Open Dental)   config.json > mysql   — forwards the app's parameterized
+ *     MySQL / MariaDB queries so every Open Dental feature (patients, appointments,
+ *     insurance pulls, practice sync, task analyzer, agent write-back) works from
+ *     the deployed site exactly as it does on the LAN. Writes are allowed: the app
+ *     edits patients and records call results. The token therefore carries
+ *     database-level power — keep it long, random, and private.
  *
- * Read-only by construction: every query is a parameterized SELECT built from
- * config.json. If config.json > schema is not mapped yet, data endpoints return
- * 503 with instructions instead of guessing.
+ *   odbc (Dentrix)        config.json > odbc + schema — read-only patient /
+ *     appointment lookups against the Dentrix c-treeACE database via FairCom's
+ *     ODBC driver. Read-only by construction: every query is a parameterized
+ *     SELECT built from the schema mapping. Until schema is mapped, Dentrix
+ *     endpoints return 503 with instructions instead of guessing.
+ *
+ * Endpoints (all except /health require Authorization: Bearer <config token>):
+ *   GET  /health                — { ok, service, dentrix: {…}, mysql: {…} } (tokenless)
+ *   GET  /                      — bridge info
+ *   POST /od/query              — { sql, params } → { ok, kind, rows?|result?, fields? }
+ *   GET  /od/info               — { ok, version, database, tables }
+ *   GET  /patients?phone=|name=|id= and /patients/:id/appointments — Dentrix
  */
 
 'use strict'
@@ -42,6 +50,8 @@ if (!config.token || /GENERATE-A-LONG-RANDOM/.test(config.token)) {
 const TOKEN = Buffer.from(config.token)
 const PORT = Number(config.port || 8787)
 
+// ---------- Dentrix (c-treeACE over ODBC) — optional ----------
+
 function schemaMapped(entry) {
   const s = config.schema && config.schema[entry]
   if (!s || !s.table || !s.id) return null
@@ -54,12 +64,19 @@ function patientColumnsMapped() {
   return s
 }
 
-let odbc
-try {
-  odbc = require('odbc')
-} catch (e) {
-  console.error('The odbc package is missing. Run:  npm install')
-  process.exit(1)
+const HAS_DENTRIX = Boolean(config.odbc && (config.odbc.dsn || (config.odbc.dsnLess && config.odbc.dsnLess.driver)))
+
+let odbc = null
+let pool = null
+let poolError = null
+
+if (HAS_DENTRIX) {
+  try {
+    odbc = require('odbc')
+  } catch (e) {
+    console.error('The odbc package is missing. Run:  npm install')
+    process.exit(1)
+  }
 }
 
 function odbcConnectionString() {
@@ -70,17 +87,16 @@ function odbcConnectionString() {
   return `Driver={${d.driver}};Server=${d.server || 'localhost'};Service=${d.service || '5712'};UID=${d.uid || 'ADMIN'};PWD=${d.pwd || ''}`
 }
 
-const CS = odbcConnectionString()
-if (!CS) {
+const CS = HAS_DENTRIX ? odbcConnectionString() : null
+if (HAS_DENTRIX && !CS) {
   console.error('config.json > odbc: set either dsn or dsnLess.driver. Run probe.js first to find a working connection.')
   process.exit(1)
 }
 
 // odbc.pool() connects eagerly and returns a Promise — create it lazily so the
 // bridge still serves /health (with db disconnected) when the driver or server is down.
-let pool = null
-let poolError = null
 async function getPool() {
+  if (!HAS_DENTRIX) return null
   if (pool) return pool
   try {
     pool = await odbc.pool({ connectionString: CS, connectionTimeout: 8, loginTimeout: 8 })
@@ -92,11 +108,94 @@ async function getPool() {
   return pool
 }
 
-// ---------- db helpers ----------
+// ---------- Open Dental (MySQL / MariaDB) — optional ----------
+
+const HAS_MYSQL = Boolean(config.mysql && config.mysql.host)
+
+let mysql = null
+let odPool = null
+
+if (HAS_MYSQL) {
+  try {
+    mysql = require('mysql2/promise')
+  } catch (e) {
+    console.error('The mysql2 package is missing. Run:  npm install')
+    process.exit(1)
+  }
+  // dateStrings keeps DATE/DATETIME/TIMESTAMP as the server sent them so we can
+  // convert to ISO in this machine's timezone (= the practice's timezone);
+  // multipleStatements stays off so stacked statements are rejected server-side.
+  odPool = mysql.createPool({
+    host: config.mysql.host || '127.0.0.1',
+    port: Number(config.mysql.port) || 3306,
+    user: config.mysql.user || 'root',
+    password: config.mysql.password || '',
+    database: config.mysql.database || undefined,
+    connectionLimit: 4,
+    connectTimeout: 5000,
+    dateStrings: true,
+    multipleStatements: false,
+  })
+}
+
+if (!HAS_DENTRIX && !HAS_MYSQL) {
+  console.error('config.json has no engine enabled. Fill in either the mysql block (Open Dental) or the odbc block (Dentrix).')
+  process.exit(1)
+}
+
+// MySQL field type codes for DATE / DATETIME / TIMESTAMP / NEWDATE (+8-byte variants)
+const OD_DATE_TYPES = new Set([7, 10, 12, 14, 17, 18])
+
+// JSON-safe row shaping for /od/query. Buffers (MySQL BIT) become numbers,
+// date strings become ISO timestamps interpreted in this machine's timezone —
+// the bridge runs in the practice, so that matches what the database means.
+function cleanOdRow(row, fields) {
+  const dateNames = new Set((fields || []).filter((f) => OD_DATE_TYPES.has(f.type)).map((f) => f.name))
+  const out = {}
+  for (const [k, v] of Object.entries(row)) {
+    if (Buffer.isBuffer(v)) { out[k] = v.length === 1 ? v[0] : v.toString('hex'); continue }
+    if (v instanceof Date) { out[k] = v.toISOString(); continue }
+    if (dateNames.has(k) && typeof v === 'string') {
+      const m = v.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}):(\d{2}))?$/)
+      if (m) {
+        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0))
+        out[k] = isNaN(d.getTime()) ? v : d.toISOString()
+        continue
+      }
+    }
+    out[k] = v === undefined ? null : v
+  }
+  return out
+}
+
+async function odQuery(body) {
+  const sql = typeof body?.sql === 'string' ? body.sql : ''
+  if (!sql.trim()) return { badRequest: 'sql is required.' }
+  if (sql.length > 65536) return { badRequest: 'sql is too long.' }
+  const params = Array.isArray(body?.params) ? body.params.slice(0, 200) : []
+  const [result, fields] = await odPool.query(sql, params)
+  if (Array.isArray(result)) {
+    const cleanFields = (fields || []).map((f) => ({ name: f.name, type: f.type }))
+    return { kind: 'rows', rows: result.map((r) => cleanOdRow(r, fields)), fields: cleanFields }
+  }
+  return {
+    kind: 'result',
+    result: { affectedRows: result.affectedRows, insertId: result.insertId, changedRows: result.changedRows },
+  }
+}
+
+async function odInfo() {
+  const [[v]] = await odPool.query('SELECT VERSION() AS version, DATABASE() AS db')
+  const [[t]] = await odPool.query('SELECT COUNT(*) AS tables FROM information_schema.tables WHERE table_schema = DATABASE()')
+  return { version: v.version, database: v.db, tables: t.tables }
+}
+
+// ---------- status checks ----------
 
 let lastDbCheck = { at: 0, connected: false, error: null }
 
 async function dbStatus(force = false) {
+  if (!HAS_DENTRIX) return { connected: false, error: 'not configured' }
   if (!force && Date.now() - lastDbCheck.at < 30000) return lastDbCheck
   const p = await getPool()
   if (!p) {
@@ -110,6 +209,20 @@ async function dbStatus(force = false) {
     lastDbCheck = { at: Date.now(), connected: false, error: e.message }
   }
   return lastDbCheck
+}
+
+let lastOdCheck = { at: 0, connected: false, error: null }
+
+async function odStatus(force = false) {
+  if (!HAS_MYSQL) return { connected: false, error: 'not configured' }
+  if (!force && Date.now() - lastOdCheck.at < 30000) return lastOdCheck
+  try {
+    await Promise.race([odPool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))])
+    lastOdCheck = { at: Date.now(), connected: true, error: null }
+  } catch (e) {
+    lastOdCheck = { at: Date.now(), connected: false, error: e.message }
+  }
+  return lastOdCheck
 }
 
 async function q(sql, params) {
@@ -214,6 +327,22 @@ function authorized(req) {
   return given.length === TOKEN.length && crypto.timingSafeEqual(given, TOKEN)
 }
 
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > 1024 * 1024) { reject(new Error('body too large')); req.destroy(); return }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}) } catch { resolve({}) }
+    })
+    req.on('error', reject)
+  })
+}
+
 async function readUpstream(req, res, upstream, extra) {
   try {
     const result = await upstream()
@@ -230,14 +359,41 @@ async function readUpstream(req, res, upstream, extra) {
   }
 }
 
+async function handleOdQuery(req, res) {
+  const body = await readBody(req)
+  try {
+    const result = await odQuery(body)
+    if (result.badRequest) return send(res, 400, { ok: false, error: { message: result.badRequest } })
+    return send(res, 200, { ok: true, ...result })
+  } catch (e) {
+    // Surface the real MySQL error code (ER_ACCESS_DENIED_ERROR, ER_BAD_DB_ERROR,
+    // …) so the app's friendly messages keep working through the bridge.
+    return send(res, 500, { ok: false, error: { code: e.code || 'ER_UNKNOWN', errno: e.errno, sqlMessage: e.sqlMessage || e.message, message: e.message } })
+  }
+}
+
+async function handleOdInfo(req, res) {
+  try {
+    const info = await odInfo()
+    return send(res, 200, { ok: true, ...info })
+  } catch (e) {
+    return send(res, 500, { ok: false, error: { code: e.code || 'ER_UNKNOWN', errno: e.errno, sqlMessage: e.sqlMessage || e.message, message: e.message } })
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const p = url.pathname.replace(/\/+$/, '') || '/'
   const q = Object.fromEntries(url.searchParams)
 
   if (p === '/health') {
-    const status = await dbStatus()
-    return send(res, 200, { ok: true, service: 'corinne-dentrix-bridge', db: { connected: status.connected, error: status.error } })
+    const [dentrix, mysqlStatus] = await Promise.all([dbStatus(), odStatus()])
+    const body = { ok: true, service: 'corinne-bridge' }
+    if (HAS_DENTRIX) body.dentrix = { connected: dentrix.connected, error: dentrix.error }
+    if (HAS_MYSQL) body.mysql = { connected: mysqlStatus.connected, error: mysqlStatus.error }
+    // legacy field for the app's Dentrix status card
+    if (HAS_DENTRIX) body.db = { connected: dentrix.connected, error: dentrix.error }
+    return send(res, 200, body)
   }
 
   if (!authorized(req)) {
@@ -248,14 +404,26 @@ const server = http.createServer(async (req, res) => {
   console.log(`${new Date().toISOString()} 200 ${p}${Object.keys(q).length ? ' ' + JSON.stringify(q) : ''}`)
 
   if (p === '/') {
-    const schemaReady = Boolean(patientColumnsMapped())
+    const endpoints = ['/health']
+    if (HAS_MYSQL) endpoints.push('/od/query (POST)', '/od/info')
+    if (HAS_DENTRIX) endpoints.push('/patients?phone=|name=|id=', '/patients/:id/appointments')
     return send(res, 200, {
       ok: true,
-      service: 'corinne-dentrix-bridge',
-      version: '1.0.0',
-      schemaMapped: schemaReady,
-      endpoints: ['/health', '/patients?phone=|name=|id=', '/patients/:id/appointments'],
+      service: 'corinne-bridge',
+      version: '1.1.0',
+      engines: { openDental: HAS_MYSQL, dentrix: HAS_DENTRIX },
+      schemaMapped: Boolean(patientColumnsMapped()),
+      endpoints,
     })
+  }
+
+  if (p === '/od/query') {
+    if (!HAS_MYSQL) return send(res, 503, { error: 'MySQL engine is not configured on this bridge. Fill config.json > mysql.' })
+    return handleOdQuery(req, res)
+  }
+  if (p === '/od/info') {
+    if (!HAS_MYSQL) return send(res, 503, { error: 'MySQL engine is not configured on this bridge. Fill config.json > mysql.' })
+    return handleOdInfo(req, res)
   }
 
   if (p === '/patients') return readUpstream(req, res, () => findPatients(q), {})
@@ -267,13 +435,15 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Corinne Dentrix bridge listening on http://127.0.0.1:${PORT}`)
+  console.log(`Corinne bridge listening on http://127.0.0.1:${PORT}`)
   console.log('Expose it with an outbound-only tunnel (Cloudflare Tunnel or Tailscale Funnel).')
-  console.log(`Schema mapped: patient=${Boolean(patientColumnsMapped())} appointment=${Boolean(schemaMapped('appointment'))}`)
+  console.log(`Engines: openDental=${HAS_MYSQL ? 'on' : 'off'} dentrix=${HAS_DENTRIX ? 'on' : 'off'}`)
+  if (HAS_DENTRIX) console.log(`Schema mapped: patient=${Boolean(patientColumnsMapped())} appointment=${Boolean(schemaMapped('appointment'))}`)
 })
 
 async function shutdown() {
   try { if (pool) await pool.close() } catch {}
+  try { if (odPool) await odPool.end() } catch {}
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

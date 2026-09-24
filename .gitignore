@@ -22,8 +22,9 @@ coverage/
 *credentials*.json
 *service-account*.json
 *-firebase-adminsdk-*.json
-secrets/
-.secrets/
+# root-anchored so app/api/secrets/ (a source route) is not swallowed
+/secrets/
+/.secrets/
 
 # Local databases and patient-data exports
 *.db
